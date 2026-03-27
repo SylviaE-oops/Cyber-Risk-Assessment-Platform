@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cyber Risk Assessment Platform</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ===== HEADER ===== -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">🛡️</span>
+        <span class="logo-text">CyberRisk<strong>Assess</strong></span>
+      </div>
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="questionnaire">Questionnaire</button>
+        <button class="tab-btn" data-tab="dashboard" id="dashboardTab" disabled>Dashboard</button>
+        <button class="tab-btn" data-tab="recommendations" id="recsTab" disabled>Recommendations</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main-content">
+
+    <!-- ──────────────────────────────────────────
+         TAB 1 · QUESTIONNAIRE
+    ─────────────────────────────────────────── -->
+    <section id="tab-questionnaire" class="tab-panel active">
+
+      <div class="section-header">
+        <h1>Cybersecurity Risk Questionnaire</h1>
+        <p class="subtitle">Answer all questions honestly to receive an accurate risk assessment.</p>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="progress-container" aria-label="Questionnaire progress">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressFill" style="width: 0%"></div>
+        </div>
+        <span class="progress-label" id="progressLabel">0 / 10 answered</span>
+      </div>
+
+      <!-- Questions list -->
+      <div class="questions-list" id="questionsList">
+        <!-- Injected by script.js -->
+      </div>
+
+      <!-- Submit button -->
+      <div class="submit-area">
+        <button class="btn btn-primary btn-lg" id="submitBtn" disabled>
+          Generate Risk Assessment
+        </button>
+        <p class="submit-hint" id="submitHint">Please answer all questions to continue.</p>
+      </div>
+
+    </section>
+
+    <!-- ──────────────────────────────────────────
+         TAB 2 · DASHBOARD
+    ─────────────────────────────────────────── -->
+    <section id="tab-dashboard" class="tab-panel">
+
+      <div class="section-header">
+        <h1>Risk Score Dashboard</h1>
+        <p class="subtitle">Your overall cybersecurity risk posture at a glance.</p>
+      </div>
+
+      <div class="dashboard-grid">
+
+        <!-- Score card -->
+        <div class="card score-card" id="scoreCard">
+          <div class="score-label">Overall Risk Score</div>
+          <div class="score-value" id="scoreValue">—</div>
+          <div class="score-out-of">out of 100</div>
+          <div class="risk-badge" id="riskBadge">—</div>
+          <div class="risk-description" id="riskDescription"></div>
+        </div>
+
+        <!-- Score gauge / visual breakdown -->
+        <div class="card breakdown-card">
+          <h2 class="card-title">Risk Level Scale</h2>
+          <div class="gauge-track">
+            <div class="gauge-segment low">Low<br/><small>0–30</small></div>
+            <div class="gauge-segment medium">Medium<br/><small>31–70</small></div>
+            <div class="gauge-segment high">High<br/><small>71–100</small></div>
+          </div>
+          <div class="gauge-pointer-wrap">
+            <div class="gauge-pointer" id="gaugePointer"></div>
+          </div>
+          <p class="gauge-hint">← Your score is indicated by the pointer above.</p>
+        </div>
+
+        <!-- Summary stats -->
+        <div class="card stats-card">
+          <h2 class="card-title">Answer Summary</h2>
+          <ul class="stats-list" id="statsList">
+            <!-- Injected by script.js -->
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="dashboard-actions">
+        <button class="btn btn-primary" id="viewRecsBtn">View Recommendations →</button>
+        <button class="btn btn-secondary" id="retakeBtn">Retake Assessment</button>
+      </div>
+
+    </section>
+
+    <!-- ──────────────────────────────────────────
+         TAB 3 · RECOMMENDATIONS
+    ─────────────────────────────────────────── -->
+    <section id="tab-recommendations" class="tab-panel">
+
+      <div class="section-header">
+        <h1>AI-Powered Recommendations</h1>
+        <p class="subtitle">Actionable steps to improve your security posture, grouped by priority.</p>
+      </div>
+
+      <div id="recsContainer">
+        <!-- Injected by script.js -->
+      </div>
+
+      <div class="recs-actions">
+        <button class="btn btn-secondary" id="retakeBtn2">Retake Assessment</button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ===== LOADING OVERLAY ===== -->
+  <div class="loading-overlay" id="loadingOverlay" aria-live="polite" hidden>
+    <div class="spinner" role="status">
+      <div class="spinner-ring"></div>
+      <p class="spinner-text">Analysing your responses…</p>
+    </div>
+  </div>
+
+  <!-- ===== ERROR TOAST ===== -->
+  <div class="toast toast-error" id="errorToast" hidden role="alert">
+    <span class="toast-icon">⚠️</span>
+    <span class="toast-message" id="errorMessage">Something went wrong.</span>
+    <button class="toast-close" id="toastClose">✕</button>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
