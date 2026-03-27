@@ -34,16 +34,22 @@ const QUESTIONS = [
 
 const CAT_MAX = [18, 17, 15, 16, 14];
 const CAT_NAMES = ['Access Control','Data Protection','Device & Network','Incident Response','Security Awareness'];
+const PROGRESS_KEY = 'cyberposture_progress_v1';
+const API_BASE_URL = window.API_BASE_URL || 'http://localhost:3000';
+const AUTH_TOKEN_KEY = 'cyberposture_jwt_token';
+const ANTHROPIC_API_KEY = window.ANTHROPIC_API_KEY || localStorage.getItem('anthropic_api_key') || '';
 
 // State
 let currentQ = 0; // 0 = setup, 1-25 = questions
 let answers = {}; // { questionId: pts }
 let orgName = '';
 let orgType = '';
+let isSubmitting = false;
 
 // ─── BUILD QUESTION SCREENS ───────────────────────────────────────
 function buildScreens() {
   const container = document.getElementById('questionScreens');
+  container.innerHTML = '';
   QUESTIONS.forEach((q, idx) => {
     const div = document.createElement('div');
     div.className = 'q-screen';
@@ -82,11 +88,19 @@ function selectOption(qIdx, optIdx, pts) {
     document.getElementById('opt-'+qIdx+'-'+i).classList.toggle('selected', i===optIdx);
   });
   document.getElementById('next-'+qIdx).disabled = false;
+  persistProgress();
 }
 
 function startAssessment() {
-  orgName = document.getElementById('orgName').value.trim() || 'your organization';
+  const enteredName = document.getElementById('orgName').value.trim();
+  if (!enteredName) {
+    alert('Please enter your organization name before starting.');
+    document.getElementById('orgName').focus();
+    return;
+  }
+  orgName = enteredName;
   orgType = document.getElementById('orgType').value;
+  persistProgress();
   showScreen('q', 0);
 }
 
@@ -113,6 +127,7 @@ function showScreen(type, idx) {
   if (type === 'setup') {
     document.getElementById('screen-setup').classList.add('active');
     updateProgress(0, 'Getting started');
+    currentQ = 0;
   } else if (type === 'q') {
     document.getElementById('screen-q'+idx).classList.add('active');
     const pct = Math.round(((idx+1)/QUESTIONS.length)*95);
@@ -124,6 +139,7 @@ function showScreen(type, idx) {
   } else if (type === 'results') {
     document.getElementById('resultsScreen').classList.add('active');
     updateProgress(100, 'Assessment complete');
+    clearProgress();
   }
 }
 
@@ -159,19 +175,40 @@ function getBarColor(pct) {
   return '#00e5a0';
 }
 
-// ─── MOCK DB ──────────────────────────────────────────────────────
-// In production this would be a real POST to your backend API.
-// Here we simulate a DB save using localStorage as the storage layer.
+// ─── BACKEND API ───────────────────────────────────────────────────
 async function saveToDatabase(record) {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      const id = 'ASMT-' + Date.now().toString(36).toUpperCase();
-      const stored = JSON.parse(localStorage.getItem('cyberposture_db') || '[]');
-      stored.push({ id, ...record, savedAt: new Date().toISOString() });
-      localStorage.setItem('cyberposture_db', JSON.stringify(stored));
-      resolve(id);
-    }, 900);
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/assessment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(record)
   });
+
+  if (response.status === 401) {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    throw new Error('Unauthorized. Could not validate JWT token.');
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Could not save assessment');
+  }
+
+  return data.id;
+}
+
+async function getAuthToken() {
+  const cached = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!cached) {
+    if (typeof openLoginModal === 'function') openLoginModal();
+    throw new Error('Please sign in before saving your assessment.');
+  }
+
+  return cached;
 }
 
 // ─── AI AGENT ────────────────────────────────────────────────────
@@ -209,9 +246,17 @@ Three specific, actionable steps prioritized by impact. For each: a short name, 
 
 Tone: direct, clear, human — like a knowledgeable friend explaining over coffee. Never use: "threat vector", "attack surface", "remediate", "mitigate", "leverage", or "stakeholders".`;
 
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error('Missing Anthropic API key; using fallback report.');
+  }
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -226,7 +271,12 @@ Tone: direct, clear, human — like a knowledgeable friend explaining over coffe
 
 // ─── SUBMIT FLOW ─────────────────────────────────────────────────
 async function submitAssessment() {
+  if (isSubmitting) return;
+  isSubmitting = true;
   showScreen('saving');
+
+  // Reset visual state for repeat runs.
+  [1,2,3,4].forEach(step => setStep(step, ''));
 
   const scores = calcScores();
   const tier = getRiskTier(scores.pct);
@@ -239,14 +289,26 @@ async function submitAssessment() {
   // Step 2: Save to DB
   setStep(2, 'active');
   const record = {
-    orgName, orgType,
-    scores: scores.cats,
-    total: scores.total,
-    pct: scores.pct,
-    tier: tier.label,
-    answers
+    org_name: orgName,
+    org_type: orgType,
+    answers,
+    score: scores.pct,
+    risk_level: tier.label
   };
-  const recordId = await saveToDatabase(record);
+  let recordId = null;
+  try {
+    recordId = await saveToDatabase(record);
+  } catch (error) {
+    console.error('Save failed:', error);
+    if (typeof openLoginModal === 'function') {
+      openLoginModal();
+    }
+    alert(error.message || 'Could not save assessment to the server.');
+    setStep(2, '');
+    isSubmitting = false;
+    showScreen('q', QUESTIONS.length - 1);
+    return;
+  }
   setStep(2, 'done');
 
   // Step 3: AI Agent
@@ -266,13 +328,15 @@ async function submitAssessment() {
 
   await delay(300);
   showResults(scores, tier, aiReport, recordId);
+  isSubmitting = false;
 }
 
 function setStep(n, state) {
   const el = document.getElementById('step'+n);
-  el.className = 'step-row ' + state;
+  el.className = ('step-row ' + state).trim();
   if (state === 'done') el.querySelector('.step-icon').textContent = '✓';
-  if (state === 'active') el.querySelector('.step-icon').textContent = '◌';
+  else if (state === 'active') el.querySelector('.step-icon').textContent = '◌';
+  else el.querySelector('.step-icon').textContent = String(n);
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -320,18 +384,32 @@ function streamReport(raw) {
       setTimeout(tick, i % 6 === 0 ? 0 : 5);
     } else {
       el.querySelector('.cursor')?.remove();
-      // Render markdown
-      el.innerHTML = raw
-        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/^- (.+)$/gm, '<li>$1</li>')
-        .replace(/(<li>[^<]*<\/li>\n?)+/g, m => '<ul>'+m+'</ul>')
-        .split('\n\n')
-        .map(p => p.startsWith('<') ? p : `<p>${p}</p>`)
-        .join('');
+      // Render constrained markdown from escaped text to prevent script injection.
+      el.innerHTML = markdownToSafeHtml(raw);
     }
   }
   tick();
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function markdownToSafeHtml(raw) {
+  const escaped = escapeHtml(raw);
+  return escaped
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>[^<]*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
+    .split('\n\n')
+    .map(p => p.startsWith('<') ? p : `<p>${p}</p>`)
+    .join('');
 }
 
 // ─── FALLBACK REPORT (if API unavailable) ────────────────────────
@@ -365,14 +443,69 @@ ${orgName} scored ${scores.pct}/100, placing you in the **${tier.label} Risk** c
 
 // ─── RESET ───────────────────────────────────────────────────────
 function resetAll() {
+  if (isSubmitting) return;
   answers = {};
   currentQ = 0;
+  orgName = '';
+  orgType = document.getElementById('orgType').value;
   // Clear all selected states
   document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
   document.querySelectorAll('.btn-next').forEach(b => b.disabled = true);
+  clearProgress();
+  document.getElementById('orgName').value = '';
   showScreen('setup');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+function persistProgress() {
+  const payload = {
+    answers,
+    orgName: document.getElementById('orgName').value.trim(),
+    orgType: document.getElementById('orgType').value,
+    currentQ
+  };
+  localStorage.setItem(PROGRESS_KEY, JSON.stringify(payload));
+}
+
+function clearProgress() {
+  localStorage.removeItem(PROGRESS_KEY);
+}
+
+function hydrateProgress() {
+  const raw = localStorage.getItem(PROGRESS_KEY);
+  if (!raw) return;
+
+  try {
+    const saved = JSON.parse(raw);
+    answers = saved.answers || {};
+    orgName = saved.orgName || '';
+    orgType = saved.orgType || document.getElementById('orgType').value;
+    currentQ = typeof saved.currentQ === 'number' ? saved.currentQ : 0;
+
+    document.getElementById('orgName').value = orgName;
+    document.getElementById('orgType').value = orgType;
+
+    QUESTIONS.forEach((q, qIdx) => {
+      const pts = answers[q.id];
+      if (pts === undefined) return;
+      const selectedIndex = q.options.findIndex(o => o.pts === pts);
+      if (selectedIndex === -1) return;
+
+      q.options.forEach((_, optIdx) => {
+        document.getElementById('opt-' + qIdx + '-' + optIdx)
+          .classList.toggle('selected', optIdx === selectedIndex);
+      });
+      document.getElementById('next-' + qIdx).disabled = false;
+    });
+
+    if (Object.keys(answers).length > 0 && currentQ < QUESTIONS.length) {
+      showScreen('q', Math.max(0, currentQ));
+    }
+  } catch {
+    clearProgress();
+  }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────
 buildScreens();
+hydrateProgress();

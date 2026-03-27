@@ -6,6 +6,10 @@
 <title>CyberPosture — Risk Assessment</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<script>
+  window.API_BASE_URL = 'http://localhost:3000';
+  window.GOOGLE_CLIENT_ID = 'your_google_client_id.apps.googleusercontent.com';
+</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 
 </head>
@@ -20,6 +24,19 @@
     <p class="modal-sub">Save your assessments and access your security history.</p>
     <div class="google-btn-wrap">
       <div id="googleSignInBtn"></div>
+    </div>
+    <div class="auth-divider"><span>or</span></div>
+    <div class="login-form" id="loginForm">
+      <div class="field-group">
+        <label for="loginUsername">Username</label>
+        <input type="text" id="loginUsername" placeholder="Enter username" autocomplete="username">
+      </div>
+      <div class="field-group">
+        <label for="loginPassword">Password</label>
+        <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password">
+      </div>
+      <button class="btn-next login-submit" id="loginSubmitBtn" onclick="handleLogin()">Sign in</button>
+      <p class="login-error" id="loginError"></p>
     </div>
     <p class="modal-terms">By signing in, you agree to our Terms of Service and Privacy Policy.</p>
   </div>
