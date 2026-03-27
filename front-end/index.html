@@ -6,12 +6,38 @@
 <title>CyberPosture — Risk Assessment</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 </head>
 <body>
+
+<!-- LOGIN MODAL -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeLoginModal()">&#10005;</button>
+    <div class="modal-logo">CyberPosture AI</div>
+    <h2 class="modal-title">Sign in to your account</h2>
+    <p class="modal-sub">Save your assessments and access your security history.</p>
+    <div class="google-btn-wrap">
+      <div id="googleSignInBtn"></div>
+    </div>
+    <p class="modal-terms">By signing in, you agree to our Terms of Service and Privacy Policy.</p>
+  </div>
+</div>
+
 <div class="container">
 
-  <div class="logo">CyberPosture AI</div>
+  <div class="site-header">
+    <div class="logo">CyberPosture AI</div>
+    <div class="header-right">
+      <div class="user-info" id="userInfo" style="display:none">
+        <img class="user-avatar" id="userAvatar" src="" alt="">
+        <span class="user-name" id="userName"></span>
+        <button class="btn-signout" onclick="signOut()">Sign out</button>
+      </div>
+      <button class="btn-login" id="loginBtn" onclick="openLoginModal()">Sign in</button>
+    </div>
+  </div>
   <h1>Cyber risk <span>assessment</span></h1>
   <p class="subtitle">Answer 25 questions. We'll score your posture and generate a personalized security report.</p>
 
@@ -96,6 +122,6 @@
 </div>
 
 <script src="script.js"></script>
-
+<script src="googleAuth.js"></script>
 </body>
 </html>

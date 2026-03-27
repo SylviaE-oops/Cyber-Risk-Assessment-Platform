@@ -162,3 +162,65 @@ body::before {
   .reset-btn:hover { border-color: var(--border-bright); color: var(--text); }
 
   @keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+
+  /* SITE HEADER */
+  .site-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+
+  /* LOGIN BUTTON */
+  .btn-login {
+    background: transparent; border: 1px solid var(--accent); color: var(--accent);
+    padding: 8px 18px; border-radius: 8px; font-family: var(--mono); font-size: 11px;
+    font-weight: 700; letter-spacing: .08em; text-transform: uppercase; cursor: pointer;
+    transition: background .2s, color .2s;
+  }
+  .btn-login:hover { background: var(--accent); color: #000; }
+
+  /* USER INFO (post-login) */
+  .user-info { display: flex; align-items: center; gap: 10px; }
+  .user-avatar { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border-bright); }
+  .user-name { font-size: 13px; color: var(--text-muted); }
+  .btn-signout {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    padding: 6px 12px; border-radius: 8px; font-family: var(--mono); font-size: 10px;
+    letter-spacing: .06em; cursor: pointer; transition: border-color .2s, color .2s;
+  }
+  .btn-signout:hover { border-color: var(--border-bright); color: var(--text); }
+
+  /* MODAL OVERLAY */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; animation: fadeIn .2s ease both; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+  /* MODAL BOX */
+  .modal-box {
+    position: relative; background: var(--surface); border: 1px solid var(--border-bright);
+    border-radius: 20px; padding: 40px 36px; width: 100%; max-width: 400px;
+    margin: 24px; text-align: center; animation: slideUp .25s ease both;
+  }
+  @keyframes slideUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+
+  .modal-close {
+    position: absolute; top: 14px; right: 16px; background: transparent; border: none;
+    color: var(--text-dim); font-size: 16px; cursor: pointer; line-height: 1;
+    padding: 4px 6px; border-radius: 6px; transition: color .2s, background .2s;
+  }
+  .modal-close:hover { color: var(--text); background: var(--surface2); }
+
+  .modal-logo {
+    font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: .15em;
+    text-transform: uppercase; margin-bottom: 20px;
+  }
+  .modal-title { font-family: var(--mono); font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+  .modal-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 28px; line-height: 1.5; }
+
+  .google-btn-wrap {
+    display: flex; justify-content: center; margin-bottom: 24px;
+    padding: 20px; background: var(--surface2); border: 1px solid var(--border); border-radius: 12px;
+  }
+
+  .modal-terms { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
