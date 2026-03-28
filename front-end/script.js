@@ -203,11 +203,7 @@ async function saveToDatabase(record) {
 
 async function getAuthToken() {
   const cached = localStorage.getItem(AUTH_TOKEN_KEY);
-  if (!cached) {
-    if (typeof openLoginModal === 'function') openLoginModal();
-    throw new Error('Please sign in before saving your assessment.');
-  }
-
+  if (!cached) throw new Error('Not signed in');
   return cached;
 }
 
@@ -286,7 +282,7 @@ async function submitAssessment() {
   await delay(600);
   setStep(1, 'done');
 
-  // Step 2: Save to DB
+  // Step 2: Save to DB (skipped silently if not signed in)
   setStep(2, 'active');
   const record = {
     org_name: orgName,
@@ -298,18 +294,11 @@ async function submitAssessment() {
   let recordId = null;
   try {
     recordId = await saveToDatabase(record);
+    setStep(2, 'done');
   } catch (error) {
-    console.error('Save failed:', error);
-    if (typeof openLoginModal === 'function') {
-      openLoginModal();
-    }
-    alert(error.message || 'Could not save assessment to the server.');
+    console.warn('Save skipped (guest):', error.message);
     setStep(2, '');
-    isSubmitting = false;
-    showScreen('q', QUESTIONS.length - 1);
-    return;
   }
-  setStep(2, 'done');
 
   // Step 3: AI Agent
   setStep(3, 'active');
@@ -346,8 +335,9 @@ function showResults(scores, tier, aiReport, recordId) {
   showScreen('results');
 
   // DB note
-  document.getElementById('dbNote').textContent =
-    `Saved to database — Record ID: ${recordId} · ${new Date().toLocaleString()}`;
+  document.getElementById('dbNote').textContent = recordId
+    ? `Saved to database — Record ID: ${recordId} · ${new Date().toLocaleString()}`
+    : 'Guest mode — results not saved. Sign in to save your assessment.';
 
   // Score hero
   document.getElementById('bigScore').textContent = scores.pct;
