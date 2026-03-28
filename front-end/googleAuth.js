@@ -241,7 +241,22 @@
     }
 
     initGoogleSignIn();
+
+    // Apply saved theme on load
+    const savedTheme = localStorage.getItem('cyberposture_theme') || 'dark';
+    applyTheme(savedTheme);
   });
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.getElementById('themeIcon').src = theme === 'dark' ? 'icons/night-mode.png' : 'icons/night-mode.png';
+    localStorage.setItem('cyberposture_theme', theme);
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+  }
 
   window.handleLogin = handleLogin;
   window.handleRegister = handleRegister;
@@ -249,4 +264,5 @@
   window.closeLoginModal = closeLoginModal;
   window.signOut = signOut;
   window.toggleRegistration = toggleRegistration;
+  window.toggleTheme = toggleTheme;
 })();
