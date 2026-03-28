@@ -321,11 +321,7 @@ async function saveToDatabase(record) {
 
 async function getAuthToken() {
   const cached = localStorage.getItem(AUTH_TOKEN_KEY);
-  if (!cached) {
-    if (typeof openLoginModal === 'function') openLoginModal();
-    throw new Error('Please sign in before saving your assessment.');
-  }
-
+  if (!cached) throw new Error('Not signed in');
   return cached;
 }
 
@@ -364,7 +360,7 @@ async function submitAssessment() {
   await delay(600);
   setStep(1, 'done');
 
-  // Step 2: Save to DB
+  // Step 2: Save to DB (skipped silently if not signed in)
   setStep(2, 'active');
   updateProgress(98, 'Saving your assessment...');
   const record = {
@@ -376,6 +372,7 @@ async function submitAssessment() {
   };
   let saveResult = null;
   try {
+<<<<<<< HEAD
     saveResult = await saveToDatabase(record);
   } catch (error) {
     console.error('Save failed:', error);
@@ -383,12 +380,14 @@ async function submitAssessment() {
       openLoginModal();
     }
     alert(error.message || 'Could not save assessment to the server.');
+=======
+    recordId = await saveToDatabase(record);
+    setStep(2, 'done');
+  } catch (error) {
+    console.warn('Save skipped (guest):', error.message);
+>>>>>>> 2c41b1f1c9b38d5702fd99ad0d3884748216fbbf
     setStep(2, '');
-    isSubmitting = false;
-    showScreen('q', QUESTIONS.length - 1);
-    return;
   }
-  setStep(2, 'done');
 
   // Step 3: AI Agent
   setStep(3, 'active');
@@ -482,6 +481,10 @@ function togglePdfButton(mode) {
   if (!btn) return;
   btn.style.display = mode === 'tracked' ? 'inline-flex' : 'none';
 }
+  // DB note
+  document.getElementById('dbNote').textContent = recordId
+    ? `Saved to database — Record ID: ${recordId} · ${new Date().toLocaleString()}`
+    : 'Guest mode — results not saved. Sign in to save your assessment.';
 
 function sanitizeFileSegment(value) {
   return String(value || '')
