@@ -16,3 +16,5 @@ npm install express mysql2 cors dotenv jsonwebtoken google-auth-library
 
 To install everything from package.json:
 npm install
+
+ANTHROPIC_API_KEY=your_anthropic_api_key_here

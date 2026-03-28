@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS assessments (
   id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
   org_name VARCHAR(255) NOT NULL,
   org_type VARCHAR(100) NOT NULL,
   answers JSON NOT NULL,
@@ -11,6 +12,20 @@ CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
+  org_name VARCHAR(255),
+  org_type VARCHAR(100),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS assessment_reports (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  assessment_id INT NOT NULL,
+  user_id INT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(100) NOT NULL DEFAULT 'application/pdf',
+  pdf_data LONGBLOB NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_assessment_reports_assessment_id (assessment_id)
 );
 

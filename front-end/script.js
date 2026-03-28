@@ -38,13 +38,16 @@ const PROGRESS_KEY = 'cyberposture_progress_v1';
 const API_BASE_URL = window.API_BASE_URL || 'http://localhost:3000';
 const AUTH_TOKEN_KEY = 'cyberposture_jwt_token';
 const ANTHROPIC_API_KEY = window.ANTHROPIC_API_KEY || localStorage.getItem('anthropic_api_key') || '';
+const APP_PARAMS = new URLSearchParams(window.location.search);
 
 // State
 let currentQ = 0; // 0 = setup, 1-25 = questions
 let answers = {}; // { questionId: pts }
 let orgName = '';
 let orgType = '';
+let assessmentMode = 'one-time'; // 'one-time' | 'tracked'
 let isSubmitting = false;
+let latestReportData = null;
 
 // ─── BUILD QUESTION SCREENS ───────────────────────────────────────
 function buildScreens() {
@@ -91,17 +94,67 @@ function selectOption(qIdx, optIdx, pts) {
   persistProgress();
 }
 
-function startAssessment() {
+async function checkOrganizationAvailability(orgNameToCheck, orgTypeToCheck) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/org/availability`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ org_name: orgNameToCheck, org_type: orgTypeToCheck })
+  });
+
+  if (!response.ok) {
+    let errMsg = 'Could not verify organization availability right now.';
+    try { const d = await response.json(); errMsg = d.error || errMsg; } catch { /* non-JSON body */ }
+    throw new Error(errMsg);
+  }
+
+  return response.json();
+}
+
+async function startAssessment() {
   const enteredName = document.getElementById('orgName').value.trim();
+  const enteredType = document.getElementById('orgType').value;
+
   if (!enteredName) {
     alert('Please enter your organization name before starting.');
     document.getElementById('orgName').focus();
-    return;
+    return false;
   }
+
+  const selectedMode = document.querySelector('input[name="assessmentMode"]:checked')?.value || 'one-time';
+  if (selectedMode === 'tracked' && !localStorage.getItem(AUTH_TOKEN_KEY)) {
+    if (typeof openLoginModal === 'function') {
+      openLoginModal();
+    }
+    alert('Please sign in to use tracked mode and view progress on the dashboard.');
+    return false;
+  }
+
+  try {
+    const orgStatus = await checkOrganizationAvailability(enteredName, enteredType);
+    if (orgStatus.claimed && !orgStatus.ownedByCurrentUser) {
+      alert('This organization name is already used by a registered account. Please sign in with that account to continue.');
+      if (typeof openLoginModal === 'function') {
+        openLoginModal();
+      }
+      return false;
+    }
+  } catch (error) {
+    alert(error.message || 'Could not verify organization availability right now. Please try again.');
+    return false;
+  }
+
+  assessmentMode = selectedMode;
   orgName = enteredName;
-  orgType = document.getElementById('orgType').value;
+  orgType = enteredType;
   persistProgress();
   showScreen('q', 0);
+  return true;
 }
 
 function goNext(qIdx) {
@@ -113,8 +166,27 @@ function goNext(qIdx) {
 }
 
 function goBack(qIdx) {
-  if (qIdx === 0) showScreen('setup');
+  if (qIdx === 0) {
+    if (shouldReturnToDashboardOnFirstBack()) {
+      const shouldLeave = window.confirm(
+        'Are you sure you want to leave this assessment and return to the dashboard?'
+      );
+      if (!shouldLeave) {
+        return;
+      }
+      window.location.href = 'cyberriskdashboard.html';
+      return;
+    }
+    showScreen('setup');
+    return;
+  }
   else showScreen('q', qIdx-1);
+}
+
+function shouldReturnToDashboardOnFirstBack() {
+  const isDashboardFlow = APP_PARAMS.get('start') === 'questions' || APP_PARAMS.get('return') === 'dashboard';
+  const hasAuthToken = Boolean(localStorage.getItem(AUTH_TOKEN_KEY));
+  return isDashboardFlow && hasAuthToken;
 }
 
 function showScreen(type, idx) {
@@ -177,28 +249,74 @@ function getBarColor(pct) {
 
 // ─── BACKEND API ───────────────────────────────────────────────────
 async function saveToDatabase(record) {
+  const REQUEST_TIMEOUT_MS = 15000;
+
+  if (assessmentMode === 'one-time') {
+    const timeout = timeoutSignal(REQUEST_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(`${API_BASE_URL}/api/assessment/guest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(record),
+        signal: timeout.signal
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('Saving timed out. Please try again.');
+      }
+      throw error;
+    } finally {
+      timeout.clear();
+    }
+
+    if (!response.ok) {
+      let errMsg = 'Could not save one-time assessment';
+      try { const d = await response.json(); errMsg = d.error || errMsg; } catch { /* non-JSON error body */ }
+      throw new Error(errMsg);
+    }
+    const data = await response.json();
+    return { id: data.id, mode: 'one-time' };
+  }
+
   const token = await getAuthToken();
 
-  const response = await fetch(`${API_BASE_URL}/api/assessment`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify(record)
-  });
+  const timeout = timeoutSignal(REQUEST_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/assessment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(record),
+      signal: timeout.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('Saving timed out. Please try again.');
+    }
+    throw error;
+  } finally {
+    timeout.clear();
+  }
 
   if (response.status === 401) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     throw new Error('Unauthorized. Could not validate JWT token.');
   }
 
-  const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.error || 'Could not save assessment');
+    let errMsg = 'Could not save assessment';
+    try { const d = await response.json(); errMsg = d.error || errMsg; } catch { /* non-JSON error body */ }
+    throw new Error(errMsg);
   }
+  const data = await response.json();
 
-  return data.id;
+  return { id: data.id, mode: 'tracked' };
 }
 
 async function getAuthToken() {
@@ -213,60 +331,19 @@ async function getAuthToken() {
 
 // ─── AI AGENT ────────────────────────────────────────────────────
 async function runAIAgent(scores, tier, orgName, orgType) {
-  const { cats, pct } = scores;
-  const catData = CAT_NAMES.map((name, i) => ({
-    name,
-    score: cats[i],
-    max: CAT_MAX[i],
-    pct: Math.round((cats[i]/CAT_MAX[i])*100)
-  }));
-  const weakest = [...catData].sort((a,b)=>a.pct-b.pct).slice(0,3);
-
-  const prompt = `You are a cybersecurity advisor helping ${orgName}, a ${orgType}, understand their security assessment results in plain, non-technical language.
-
-Assessment Results:
-- Overall Cyber Risk Score: ${pct}/100 — ${tier.label} Risk
-${catData.map(c => `- ${c.name}: ${c.score}/${c.max} pts (${c.pct}%)`).join('\n')}
-
-Weakest areas: ${weakest.map(w => `${w.name} (${w.pct}%)`).join(', ')}
-
-Write a security report with these four sections using ## headings:
-
-## What this score means
-2–3 sentences explaining what this risk level means day-to-day for a non-technical audience.
-
-## Your biggest risks right now
-For the 2–3 weakest categories: explain what could go wrong in plain language with a concrete real-world scenario. No jargon.
-
-## Top 3 things to fix first
-Three specific, actionable steps prioritized by impact. For each: a short name, one sentence on why it matters, and a concrete first step to take this week.
-
-## What you're doing well
-1–2 categories where the organization scored well. Brief and encouraging.
-
-Tone: direct, clear, human — like a knowledgeable friend explaining over coffee. Never use: "threat vector", "attack surface", "remediate", "mitigate", "leverage", or "stakeholders".`;
-
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error('Missing Anthropic API key; using fallback report.');
-  }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const response = await fetch(`${API_BASE_URL}/api/ai-report`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01'
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
     },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: prompt }]
-    })
+    body: JSON.stringify({ scores, tier, orgName, orgType })
   });
 
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || 'API error');
-  return data.content?.[0]?.text || '';
+  if (!response.ok) throw new Error(data.error || 'API error');
+  return data.report || '';
 }
 
 // ─── SUBMIT FLOW ─────────────────────────────────────────────────
@@ -283,11 +360,13 @@ async function submitAssessment() {
 
   // Step 1: Score
   setStep(1, 'active');
+  updateProgress(97, 'Scoring your responses...');
   await delay(600);
   setStep(1, 'done');
 
   // Step 2: Save to DB
   setStep(2, 'active');
+  updateProgress(98, 'Saving your assessment...');
   const record = {
     org_name: orgName,
     org_type: orgType,
@@ -295,12 +374,12 @@ async function submitAssessment() {
     score: scores.pct,
     risk_level: tier.label
   };
-  let recordId = null;
+  let saveResult = null;
   try {
-    recordId = await saveToDatabase(record);
+    saveResult = await saveToDatabase(record);
   } catch (error) {
     console.error('Save failed:', error);
-    if (typeof openLoginModal === 'function') {
+    if (assessmentMode === 'tracked' && typeof openLoginModal === 'function') {
       openLoginModal();
     }
     alert(error.message || 'Could not save assessment to the server.');
@@ -313,11 +392,13 @@ async function submitAssessment() {
 
   // Step 3: AI Agent
   setStep(3, 'active');
+  updateProgress(99, 'Generating your report...');
   let aiReport = '';
   try {
     aiReport = await runAIAgent(scores, tier, orgName, orgType);
-  } catch(e) {
-    aiReport = generateFallbackReport(scores, tier, orgName);
+  } catch (e) {
+    console.warn('AI report unavailable.', e);
+    aiReport = `Stop this is the back up: ## What this score means\n\n${orgName} scored **${scores.pct}/100** — ${tier.label} Risk. ${tier.desc}\n\n## Your biggest risks right now\n\nThe areas that need the most attention are your lowest-scoring categories. Focus on those first to reduce your overall risk quickly.\n\n## Top 3 things to fix first\n\n1. **Enable two-step login** on all admin and email accounts — this blocks the most common types of account takeover.\n2. **Keep devices up to date** — apply software updates within two weeks of release to close known security gaps.\n3. **Train your staff** — run a short session so everyone knows how to spot a suspicious email.\n\n## What you're doing well\n\nCompleting this assessment is a strong first step. Use your scores above to prioritize where to start.`;
   }
   setStep(3, 'done');
 
@@ -327,48 +408,605 @@ async function submitAssessment() {
   setStep(4, 'done');
 
   await delay(300);
-  showResults(scores, tier, aiReport, recordId);
+  showResults(scores, tier, aiReport, saveResult.id, saveResult.mode);
   isSubmitting = false;
+}
+
+function showResults(scores, tier, aiReport, recordId, mode) {
+  // Store data for PDF export
+  latestReportData = {
+    orgName,
+    orgType,
+    score: scores.pct,
+    riskLabel: tier.label,
+    catScores: scores.cats,
+    aiReport: aiReport || '',
+    recordId,
+    mode,
+    generatedAt: Date.now()
+  };
+
+  // Populate score hero
+  document.getElementById('bigScore').textContent = scores.pct;
+  const badge = document.getElementById('riskBadge');
+  badge.textContent = tier.label + ' Risk';
+  badge.className = 'risk-badge ' + tier.cls;
+  document.getElementById('scoreDesc').textContent = tier.desc;
+
+  // Category bars
+  CAT_NAMES.forEach((_, i) => {
+    const pct = Math.round((scores.cats[i] / CAT_MAX[i]) * 100);
+    const fill = document.getElementById('cf' + (i + 1));
+    const label = document.getElementById('cp' + (i + 1));
+    if (fill) { fill.style.width = pct + '%'; fill.style.background = getBarColor(pct); }
+    if (label) label.textContent = pct + '%';
+  });
+
+  // DB note
+  const dbNote = document.getElementById('dbNote');
+  if (dbNote) {
+    dbNote.textContent = mode === 'tracked'
+      ? `Assessment saved — Record #${recordId}`
+      : 'Guest assessment — sign in to track results over time';
+  }
+
+  // PDF button visibility
+  togglePdfButton(mode);
+
+  // Show results screen then stream report text
+  showScreen('results');
+  streamReport(aiReport);
 }
 
 function setStep(n, state) {
   const el = document.getElementById('step'+n);
   el.className = ('step-row ' + state).trim();
   if (state === 'done') el.querySelector('.step-icon').textContent = '✓';
-  else if (state === 'active') el.querySelector('.step-icon').textContent = '◌';
+  else if (state === 'active') el.querySelector('.step-icon').textContent = '';
   else el.querySelector('.step-icon').textContent = String(n);
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ─── SHOW RESULTS ─────────────────────────────────────────────────
-function showResults(scores, tier, aiReport, recordId) {
-  showScreen('results');
+function timeoutSignal(ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timer)
+  };
+}
 
-  // DB note
-  document.getElementById('dbNote').textContent =
-    `Saved to database — Record ID: ${recordId} · ${new Date().toLocaleString()}`;
+function togglePdfButton(mode) {
+  const btn = document.getElementById('downloadPdfBtn');
+  if (!btn) return;
+  btn.style.display = mode === 'tracked' ? 'inline-flex' : 'none';
+}
 
-  // Score hero
-  document.getElementById('bigScore').textContent = scores.pct;
-  document.getElementById('bigScore').style.color = tier.color;
-  document.getElementById('riskBadge').textContent = tier.label + ' Risk';
-  document.getElementById('riskBadge').className = 'risk-badge ' + tier.cls;
-  document.getElementById('scoreDesc').textContent = tier.desc;
+function sanitizeFileSegment(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'organization';
+}
 
-  // Category bars
-  scores.cats.forEach((val, i) => {
-    const pct = Math.round((val/CAT_MAX[i])*100);
-    setTimeout(() => {
-      document.getElementById('cf'+(i+1)).style.width = pct+'%';
-      document.getElementById('cf'+(i+1)).style.background = getBarColor(pct);
-      document.getElementById('cp'+(i+1)).textContent = pct+'%';
-    }, 300 + i*120);
+function toPlainTextFromMarkdown(text) {
+  return String(text || '')
+    .replace(/^##\s+/gm, '')
+    .replace(/^[-*]\s+/gm, '- ')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\r/g, '')
+    .trim();
+}
+
+function addWrappedText(doc, text, x, y, maxWidth, lineHeight) {
+  const lines = doc.splitTextToSize(text, maxWidth);
+  doc.text(lines, x, y);
+  return y + (lines.length * lineHeight);
+}
+
+async function saveReportPdfToDatabase(assessmentId, fileName, pdfBase64) {
+  const token = await getAuthToken();
+  const response = await fetch(`${API_BASE_URL}/api/assessment/${assessmentId}/pdf`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      file_name: fileName,
+      pdf_base64: pdfBase64
+    })
   });
 
-  // Stream AI report
-  streamReport(aiReport);
+  if (response.status === 401) {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    throw new Error('Session expired. Please sign in again to save the PDF.');
+  }
+
+  if (!response.ok) {
+    let errMsg = 'Could not save PDF to your account.';
+    try { const d = await response.json(); errMsg = d.error || errMsg; } catch { /* non-JSON body */ }
+    throw new Error(errMsg);
+  }
+
+  return response.json();
 }
+
+function downloadCurrentReportPdf() {
+  if (!latestReportData) {
+    alert('No report data available yet. Please complete an assessment first.');
+    return;
+  }
+
+  const jsPdfNamespace = window.jspdf;
+  if (!jsPdfNamespace || !jsPdfNamespace.jsPDF) {
+    alert('PDF tool is not loaded. Please refresh the page and try again.');
+    return;
+  }
+
+  const { jsPDF } = jsPdfNamespace;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+  const PW = doc.internal.pageSize.getWidth();
+  const PH = doc.internal.pageSize.getHeight();
+  const ML = 44;
+  const MR = 44;
+  const CW = PW - ML - MR;
+  const BM = 52;
+
+  const C = {
+    navy: [27, 42, 74],
+    teal: [10, 126, 106],
+    tealLight: [230, 244, 241],
+    amber: [180, 83, 9],
+    amberLight: [254, 243, 199],
+    red: [185, 28, 28],
+    redLight: [254, 226, 226],
+    green: [21, 128, 61],
+    greenLight: [220, 252, 231],
+    gray1: [248, 249, 250],
+    gray2: [226, 232, 240],
+    gray3: [107, 114, 128],
+    black: [17, 24, 39],
+    white: [255, 255, 255],
+  };
+
+  function riskColor(pct) {
+    if (pct >= 75) return C.green;
+    if (pct >= 60) return C.teal;
+    if (pct >= 40) return C.amber;
+    return C.red;
+  }
+
+  function riskWord(pct) {
+    if (pct >= 75) return 'Strong';
+    if (pct >= 60) return 'Moderate';
+    if (pct >= 40) return 'Needs Work';
+    return 'Critical';
+  }
+
+  function riskLabel(pct) {
+    if (pct < 40) return 'Critical';
+    if (pct < 60) return 'High';
+    if (pct < 75) return 'Medium';
+    return 'Low';
+  }
+
+  function setFill(c) { doc.setFillColor(c[0], c[1], c[2]); }
+  function setStroke(c) { doc.setDrawColor(c[0], c[1], c[2]); }
+  function setText(c) { doc.setTextColor(c[0], c[1], c[2]); }
+
+  function wrap(text, x, y, maxWidth, lh) {
+    const lines = doc.splitTextToSize(String(text || ''), maxWidth);
+    lines.forEach((line) => {
+      doc.text(line, x, y);
+      y += lh;
+    });
+    return y;
+  }
+
+  function ensureSpace(y, needed) {
+    if (y + needed <= PH - BM) return y;
+    doc.addPage();
+    return 56;
+  }
+
+  function drawSectionTitle(y, text) {
+    y = ensureSpace(y, 32);
+    setText(C.navy);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text(text, ML, y);
+    setFill(C.navy);
+    doc.rect(ML, y + 6, 36, 1.6, 'F');
+    return y + 18;
+  }
+
+  const orgName = latestReportData.orgName || 'Your Organization';
+  const orgType = latestReportData.orgType || 'Small Business';
+  const score = Number(latestReportData.score || 0);
+  const rLabel = latestReportData.riskLabel || riskLabel(score);
+  const dateStr = new Date(latestReportData.generatedAt || Date.now()).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const reportId = latestReportData.recordId || Math.floor(Date.now() / 1000);
+
+  const catRows = (latestReportData.categoryRows || CAT_NAMES.map((name, i) => ({
+    name,
+    percent: Math.round(((latestReportData.catScores?.[i] || 0) / CAT_MAX[i]) * 100),
+  }))).map((r) => ({
+    name: r.name,
+    percent: Number(r.percent) || 0,
+  }));
+
+  const weakest = [...catRows].sort((a, b) => a.percent - b.percent).slice(0, 3);
+  const strongest = [...catRows].sort((a, b) => b.percent - a.percent)[0] || { name: 'N/A', percent: 0 };
+  const aiSummary = toPlainTextFromMarkdown(latestReportData.aiReport);
+
+  function categoryAction(catName) {
+    if (/Access Control/i.test(catName)) {
+      return {
+        action: 'Enable two-step login for admin and email accounts',
+        owner: 'IT Lead',
+        due: '7 days',
+        impact: 'High - blocks common account takeovers',
+      };
+    }
+    if (/Data Protection/i.test(catName)) {
+      return {
+        action: 'Test backup restore and assign data control owners',
+        owner: 'IT Lead',
+        due: '14 days',
+        impact: 'High - reduces data loss and recovery time',
+      };
+    }
+    if (/Device/i.test(catName)) {
+      return {
+        action: 'Patch critical systems and verify endpoint protection',
+        owner: 'IT Support',
+        due: '14 days',
+        impact: 'High - reduces exploit and malware risk',
+      };
+    }
+    if (/Incident/i.test(catName)) {
+      return {
+        action: 'Publish incident checklist and escalation contacts',
+        owner: 'Operations Manager',
+        due: '21 days',
+        impact: 'Medium-High - speeds response and reduces downtime',
+      };
+    }
+    return {
+      action: 'Run 30-minute staff security awareness session',
+      owner: 'Operations Manager',
+      due: '21 days',
+      impact: 'Medium - lowers phishing and human-error incidents',
+    };
+  }
+
+  let y = 56;
+
+  // Cover/Header
+  setFill(C.navy);
+  doc.roundedRect(ML, y, CW, 138, 6, 6, 'F');
+  setFill(C.teal);
+  doc.rect(ML, y, 4, 138, 'F');
+
+  setText(C.tealLight);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('CYBERPOSTURE AI', ML + 14, y + 24);
+
+  setText(C.white);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(26);
+  doc.text('SECURITY ASSESSMENT REPORT', ML + 14, y + 54);
+
+  doc.setFontSize(20);
+  doc.text(orgName, ML + 14, y + 82);
+
+  setText(C.gray2);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Organization Type: ${orgType}`, ML + 14, y + 104);
+  doc.text(`Date: ${dateStr}`, ML + 14, y + 120);
+  doc.text(`Report ID: #${reportId}`, PW - MR, y + 120, { align: 'right' });
+
+  y += 158;
+
+  // Score summary cards (2x2 grid)
+  const gapX = 12;
+  const cardW = (CW - gapX) / 2;
+  const cardH = 92;
+
+  function drawCard(x, yPos, title, value, sub, tone) {
+    const toneFill = tone === 'red' ? C.redLight : tone === 'amber' ? C.amberLight : tone === 'teal' ? C.tealLight : C.gray1;
+    const toneText = tone === 'red' ? C.red : tone === 'amber' ? C.amber : tone === 'teal' ? C.teal : C.black;
+    setFill(toneFill);
+    setStroke(C.gray2);
+    doc.roundedRect(x, yPos, cardW, cardH, 5, 5, 'FD');
+    setText(C.gray3);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(String(title).toUpperCase(), x + 12, yPos + 18);
+    setText(toneText);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(34);
+    doc.text(String(value), x + 12, yPos + 56);
+    if (sub) {
+      setText(C.gray3);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(sub, x + 12, yPos + 74);
+    }
+  }
+
+  const actionRequired = rLabel === 'Critical' || rLabel === 'High'
+    ? 'Start urgent fixes in Week 1'
+    : 'Begin structured improvements this month';
+
+  drawCard(ML, y, 'Overall Score', `${score}`, '/100', 'teal');
+  drawCard(ML + cardW + gapX, y, 'Risk Level', rLabel, '', rLabel === 'Low' ? 'teal' : rLabel === 'Medium' ? 'amber' : 'red');
+  y += cardH + 10;
+  drawCard(ML, y, 'Action Required', rLabel === 'High' || rLabel === 'Critical' ? 'Urgent' : 'Planned', actionRequired, rLabel === 'High' || rLabel === 'Critical' ? 'red' : 'amber');
+  drawCard(ML + cardW + gapX, y, 'Domains Assessed', `${catRows.length}`, 'Security categories reviewed', 'gray');
+  y += cardH + 18;
+
+  // Confidential notice
+  setStroke(C.gray2);
+  doc.setLineWidth(0.7);
+  doc.line(ML, y, PW - MR, y);
+  y += 14;
+  setText(C.gray3);
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.text('Confidential report. Share only with authorized personnel.', ML, y);
+  y += 22;
+
+  // Executive summary
+  y = drawSectionTitle(y, '1. Executive Summary');
+  setText(C.black);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10.5);
+  y = wrap(
+    `${orgName} scored ${score}/100 and is currently in the ${rLabel} risk range. ` +
+      `The biggest opportunities are in ${weakest[0]?.name || 'key domains'} and ${weakest[1]?.name || 'secondary domains'}. ` +
+      `Addressing these first will deliver the fastest risk reduction this month.`,
+    ML,
+    y,
+    CW,
+    14
+  );
+  y += 6;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  setText(C.navy);
+  y = wrap(`Strengths: ${strongest.name} (${strongest.percent}%) is your strongest domain and a solid base to build from.`, ML, y, CW, 14);
+  y = wrap(`Critical Gaps: ${weakest[0]?.name || 'N/A'} and ${weakest[1]?.name || 'N/A'} need immediate attention to reduce operational risk.`, ML, y + 2, CW, 14);
+  y = wrap('Good News: Most high-impact actions are low-cost and can be started this week.', ML, y + 2, CW, 14);
+  y += 8;
+
+  if (aiSummary) {
+    y = drawSectionTitle(y, 'AI Recommendation Summary');
+    y = ensureSpace(y, 90);
+    setText(C.black);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    y = wrap(aiSummary, ML, y, CW, 13);
+    y += 8;
+  }
+
+  // Findings section with table
+  y = drawSectionTitle(y, '2. Findings');
+  y = ensureSpace(y, 170);
+  const tX = ML;
+  const tW = CW;
+  const colA = Math.round(tW * 0.54);
+  const colB = Math.round(tW * 0.16);
+  const colC = tW - colA - colB;
+  const headH = 24;
+  const rowH = 24;
+
+  setFill(C.navy);
+  doc.rect(tX, y, tW, headH, 'F');
+  setText(C.white);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.text('Category', tX + 8, y + 16);
+  doc.text('Score', tX + colA + 8, y + 16);
+  doc.text('Rating', tX + colA + colB + 8, y + 16);
+  y += headH;
+
+  catRows.forEach((c, idx) => {
+    const fill = idx % 2 === 0 ? C.white : C.gray1;
+    setFill(fill);
+    doc.rect(tX, y, tW, rowH, 'F');
+    setStroke(C.gray2);
+    doc.setLineWidth(0.5);
+    doc.line(tX, y + rowH, tX + tW, y + rowH);
+    const cColor = riskColor(c.percent);
+    setText(C.black);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.text(c.name, tX + 8, y + 16);
+    setText(cColor);
+    doc.text(`${c.percent}%`, tX + colA + 8, y + 16);
+    doc.setFont('helvetica', 'normal');
+    doc.text(riskWord(c.percent), tX + colA + colB + 8, y + 16);
+    y += rowH;
+  });
+
+  y += 12;
+  for (const c of catRows) {
+    y = ensureSpace(y, 66);
+    setText(riskColor(c.percent));
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(`${c.name} - ${c.percent}%`, ML, y);
+    y += 14;
+    setText(C.black);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    y = wrap(`What is wrong: ${c.percent < 50 ? 'Controls are incomplete or inconsistent in this domain.' : 'Performance is acceptable but still has improvement opportunities.'}`, ML, y, CW, 13);
+    y = wrap(`Why it is risky: ${c.percent < 50 ? 'Weak controls here can lead to avoidable disruptions, incidents, or recovery costs.' : 'Gaps left unchecked can grow into larger risks over time.'}`, ML, y + 1, CW, 13);
+    y = wrap(`What to fix: ${categoryAction(c.name).action}.`, ML, y + 1, CW, 13);
+    y += 6;
+  }
+
+  // Top priorities
+  y = drawSectionTitle(y, 'Top Priorities - What to Fix First');
+  y = ensureSpace(y, 140);
+  setText(C.black);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  y = wrap(
+    `Most important this month: focus on ${weakest[0]?.name || 'the weakest domain'} and ${weakest[1]?.name || 'the second weakest domain'} first. ` +
+      'These actions are high-impact, low-cost, and immediately actionable.',
+    ML,
+    y,
+    CW,
+    13
+  );
+  y += 8;
+
+  y = ensureSpace(y, 120);
+  const pCols = [42, 112, 172, 82, 62, CW - 470];
+  const pX = ML;
+  const pHeadH = 24;
+  const pRowH = 34;
+  const pHeaders = ['P', 'Category', 'Action', 'Owner', 'Due', 'Impact'];
+
+  setFill(C.navy);
+  doc.rect(pX, y, CW, pHeadH, 'F');
+  setText(C.white);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  let px = pX;
+  pHeaders.forEach((h, i) => {
+    doc.text(h, px + 6, y + 16);
+    px += pCols[i];
+  });
+  y += pHeadH;
+
+  weakest.slice(0, 3).forEach((w, idx) => {
+    const act = categoryAction(w.name);
+    setFill(idx % 2 === 0 ? C.white : C.gray1);
+    doc.rect(pX, y, CW, pRowH, 'F');
+    setStroke(C.gray2);
+    doc.setLineWidth(0.5);
+    doc.line(pX, y + pRowH, pX + CW, y + pRowH);
+    setText(C.black);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    let rx = pX;
+    doc.text(String(idx + 1), rx + 6, y + 14); rx += pCols[0];
+    doc.text(w.name, rx + 6, y + 14); rx += pCols[1];
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    wrap(act.action, rx + 6, y + 12, pCols[2] - 10, 10); rx += pCols[2];
+    doc.text(act.owner, rx + 6, y + 14); rx += pCols[3];
+    doc.text(act.due, rx + 6, y + 14); rx += pCols[4];
+    wrap(act.impact, rx + 6, y + 12, pCols[5] - 10, 10);
+    y += pRowH;
+  });
+
+  // 30-day action plan
+  y = drawSectionTitle(y + 6, '3. 30-Day Action Plan');
+  y = ensureSpace(y, 130);
+  const aCols = [74, 188, 122, CW - 384];
+  const aHeaders = ['Week', 'Action', 'Category', 'Why It Matters'];
+  const actions = [
+    { week: 'Week 1', action: 'Enable two-step login for critical accounts', category: weakest[0]?.name || 'Access Control', why: 'Blocks account takeover attempts quickly.' },
+    { week: 'Week 1-2', action: 'Patch critical systems and verify endpoint protection', category: weakest[1]?.name || 'Device & Network', why: 'Reduces exploit and malware risk.' },
+    { week: 'Week 3', action: 'Publish incident checklist and owner contacts', category: 'Incident Response', why: 'Improves response speed and accountability.' },
+    { week: 'Week 3-4', action: 'Run focused staff awareness session', category: 'Security Awareness', why: 'Reduces phishing and human-error incidents.' },
+    { week: 'Week 5+', action: 'Review progress and harden remaining controls', category: 'All Domains', why: 'Sustains gains and prevents regression.' },
+  ];
+
+  setFill(C.navy);
+  doc.rect(ML, y, CW, 24, 'F');
+  setText(C.white);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  let ax = ML;
+  aHeaders.forEach((h, i) => {
+    doc.text(h, ax + 6, y + 16);
+    ax += aCols[i];
+  });
+  y += 24;
+
+  actions.forEach((a, idx) => {
+    y = ensureSpace(y, 30);
+    setFill(idx % 2 === 0 ? C.white : C.gray1);
+    doc.rect(ML, y, CW, 30, 'F');
+    setStroke(C.gray2);
+    doc.setLineWidth(0.5);
+    doc.line(ML, y + 30, ML + CW, y + 30);
+    setText(C.black);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    let cx = ML;
+    doc.text(a.week, cx + 6, y + 18); cx += aCols[0];
+    doc.setFont('helvetica', 'normal');
+    wrap(a.action, cx + 6, y + 14, aCols[1] - 10, 10); cx += aCols[1];
+    doc.text(a.category, cx + 6, y + 18); cx += aCols[2];
+    wrap(a.why, cx + 6, y + 14, aCols[3] - 10, 10);
+    y += 30;
+  });
+
+  // Closing
+  y = drawSectionTitle(y + 8, '4. Closing and Next Steps');
+  setText(C.black);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  y = wrap(
+    'Assign one owner to track weekly progress, remove blockers, and report completion. ' +
+      'Reassess in 60-90 days to confirm score improvement and set the next priority cycle.',
+    ML,
+    y,
+    CW,
+    14
+  );
+  y += 12;
+  setText(C.gray3);
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(11);
+  doc.text('- End of Report -', PW / 2, y, { align: 'center' });
+
+  // Footer on all pages
+  const totalPages = doc.internal.getNumberOfPages();
+  for (let pNum = 1; pNum <= totalPages; pNum += 1) {
+    doc.setPage(pNum);
+    setStroke(C.gray2);
+    doc.setLineWidth(0.6);
+    doc.line(ML, PH - 32, PW - MR, PH - 32);
+    setText(C.gray3);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text('Confidential - CyberPosture AI', ML, PH - 18);
+    doc.text(dateStr, PW / 2, PH - 18, { align: 'center' });
+    doc.text(`Page ${pNum} of ${totalPages}`, PW - MR, PH - 18, { align: 'right' });
+  }
+
+  const safeOrg = sanitizeFileSegment(orgName);
+  const fileName = `cyberposture-report-${safeOrg}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  const dataUri = doc.output('datauristring');
+  const pdfBase64 = dataUri.split(',')[1] || '';
+
+  if (latestReportData.mode === 'tracked' && latestReportData.recordId) {
+    saveReportPdfToDatabase(latestReportData.recordId, fileName, pdfBase64).catch((error) => {
+      console.error('PDF save failed:', error);
+      alert(error.message || 'Could not save PDF to your account.');
+    });
+  }
+
+  doc.save(fileName);
+}
+
 
 function streamReport(raw) {
   const el = document.getElementById('reportBody');
@@ -401,44 +1039,82 @@ function escapeHtml(text) {
 }
 
 function markdownToSafeHtml(raw) {
-  const escaped = escapeHtml(raw);
-  return escaped
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>[^<]*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
-    .split('\n\n')
-    .map(p => p.startsWith('<') ? p : `<p>${p}</p>`)
-    .join('');
-}
+  const escaped = escapeHtml(raw).replace(/\r/g, '');
+  const lines = escaped.split('\n');
+  const html = [];
+  let inUl = false;
+  let inOl = false;
 
-// ─── FALLBACK REPORT (if API unavailable) ────────────────────────
-function generateFallbackReport(scores, tier, orgName) {
-  const cats = CAT_NAMES.map((name,i) => ({ name, pct: Math.round((scores.cats[i]/CAT_MAX[i])*100) }));
-  const weakest = [...cats].sort((a,b)=>a.pct-b.pct).slice(0,2);
-  const strongest = [...cats].sort((a,b)=>b.pct-a.pct)[0];
+  const inline = (text) => text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
-  return `## What this score means
+  const closeLists = () => {
+    if (inUl) {
+      html.push('</ul>');
+      inUl = false;
+    }
+    if (inOl) {
+      html.push('</ol>');
+      inOl = false;
+    }
+  };
 
-${orgName} scored ${scores.pct}/100, placing you in the **${tier.label} Risk** category. ${tier.desc} This means there are concrete steps you can take right now to reduce the chance of a security incident.
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
 
-## Your biggest risks right now
+    if (!line) {
+      closeLists();
+      html.push('');
+      continue;
+    }
 
-**${weakest[0].name} (${weakest[0].pct}%)** — This is your most significant gap. For example, if employees reuse passwords or don't use two-step login, a single stolen password could give an attacker access to everything. It's one of the most common ways small organizations get compromised.
+    const h2 = line.match(/^##\s+(.+)$/);
+    if (h2) {
+      closeLists();
+      html.push(`<h2>${inline(h2[1])}</h2>`);
+      continue;
+    }
 
-**${weakest[1].name} (${weakest[1].pct}%)** — Without a clear plan here, your team won't know what to do when something goes wrong — and that turns a small incident into a big one.
+    const h3 = line.match(/^###\s+(.+)$/);
+    if (h3) {
+      closeLists();
+      html.push(`<h3>${inline(h3[1])}</h3>`);
+      continue;
+    }
 
-## Top 3 things to fix first
+    const ol = line.match(/^\d+\.\s+(.+)$/);
+    if (ol) {
+      if (inUl) {
+        html.push('</ul>');
+        inUl = false;
+      }
+      if (!inOl) {
+        html.push('<ol>');
+        inOl = true;
+      }
+      html.push(`<li>${inline(ol[1])}</li>`);
+      continue;
+    }
 
-**1. Enable two-step login** — Even if one password gets stolen, attackers can't get in without the second factor. This week: turn on MFA for email accounts first — it's usually free and takes under an hour.
+    const ul = line.match(/^-\s+(.+)$/);
+    if (ul) {
+      if (inOl) {
+        html.push('</ol>');
+        inOl = false;
+      }
+      if (!inUl) {
+        html.push('<ul>');
+        inUl = true;
+      }
+      html.push(`<li>${inline(ul[1])}</li>`);
+      continue;
+    }
 
-**2. Run a security awareness session** — Most breaches start with a phishing email. This week: schedule a 30-minute team meeting to walk through what a suspicious email looks like.
+    closeLists();
+    html.push(`<p>${inline(line)}</p>`);
+  }
 
-**3. Create an incident response contact list** — If something goes wrong, you need to know who to call. This week: write down your IT contact, internet provider number, and cyber insurance info in one place.
-
-## What you're doing well
-
-**${strongest.name} (${strongest.pct}%)** — This is your strongest area. Keep maintaining these practices as a foundation to build on.`;
+  closeLists();
+  return html.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 // ─── RESET ───────────────────────────────────────────────────────
@@ -447,6 +1123,8 @@ function resetAll() {
   answers = {};
   currentQ = 0;
   orgName = '';
+  latestReportData = null;
+  togglePdfButton('one-time');
   orgType = document.getElementById('orgType').value;
   // Clear all selected states
   document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
@@ -458,10 +1136,12 @@ function resetAll() {
 }
 
 function persistProgress() {
+  const selectedMode = document.querySelector('input[name="assessmentMode"]:checked')?.value || assessmentMode;
   const payload = {
     answers,
     orgName: document.getElementById('orgName').value.trim(),
     orgType: document.getElementById('orgType').value,
+    assessmentMode: selectedMode,
     currentQ
   };
   localStorage.setItem(PROGRESS_KEY, JSON.stringify(payload));
@@ -480,10 +1160,13 @@ function hydrateProgress() {
     answers = saved.answers || {};
     orgName = saved.orgName || '';
     orgType = saved.orgType || document.getElementById('orgType').value;
+    assessmentMode = saved.assessmentMode || assessmentMode;
     currentQ = typeof saved.currentQ === 'number' ? saved.currentQ : 0;
 
     document.getElementById('orgName').value = orgName;
     document.getElementById('orgType').value = orgType;
+    const modeInput = document.querySelector(`input[name="assessmentMode"][value="${assessmentMode}"]`);
+    if (modeInput) modeInput.checked = true;
 
     QUESTIONS.forEach((q, qIdx) => {
       const pts = answers[q.id];
@@ -506,6 +1189,65 @@ function hydrateProgress() {
   }
 }
 
+async function fetchCurrentUserProfile() {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!token) return null;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/users/me`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function bootstrap() {
+  buildScreens();
+
+  const isNewAssessment = APP_PARAMS.get('new') === '1';
+  const startMode = APP_PARAMS.get('start');
+
+  if (!isNewAssessment) {
+    hydrateProgress();
+  } else {
+    clearProgress();
+    answers = {};
+    currentQ = 0;
+  }
+
+  if (startMode === 'questions') {
+    const profile = await fetchCurrentUserProfile();
+
+    if (profile?.org_name) {
+      document.getElementById('orgName').value = profile.org_name;
+    }
+
+    if (profile?.org_type) {
+      document.getElementById('orgType').value = profile.org_type;
+    }
+
+    // Logged-in users coming from the dashboard automatically use tracked mode.
+    if (localStorage.getItem(AUTH_TOKEN_KEY)) {
+      const trackedRadio = document.querySelector('input[name="assessmentMode"][value="tracked"]');
+      if (trackedRadio) trackedRadio.checked = true;
+    }
+
+    if (document.getElementById('orgName').value.trim()) {
+      const started = await startAssessment();
+      if (started) {
+        return;
+      }
+    }
+  }
+
+  showScreen('setup');
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────
-buildScreens();
-hydrateProgress();
+bootstrap();
+
+window.downloadCurrentReportPdf = downloadCurrentReportPdf;

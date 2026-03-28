@@ -9,6 +9,7 @@
 <script>
   window.API_BASE_URL = 'http://localhost:3000';
   window.GOOGLE_CLIENT_ID = 'your_google_client_id.apps.googleusercontent.com';
+  window.ANTHROPIC_API_KEY = 'YOUR_ANTHROPIC_KEY_HERE'; // Replace with your real sk-ant-... key
 </script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 
@@ -123,6 +124,19 @@
           </select>
         </div>
       </div>
+
+      <div class="mode-row">
+        <label class="mode-option">
+          <input type="radio" name="assessmentMode" value="one-time" id="modeOneTime" checked>
+          <span>One-time assessment</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="assessmentMode" value="tracked" id="modeTracked">
+          <span>Create/sign in account to track progress</span>
+        </label>
+      </div>
+      <p class="mode-note" id="modeNote">One-time mode saves this assessment only. Track mode links results to your account and dashboard.</p>
+
       <div class="nav-row">
         <span></span>
         <button class="btn-next" onclick="startAssessment()">Start assessment &#8594;</button>
@@ -172,10 +186,13 @@
       </div>
       <div class="report-body" id="reportBody"></div>
     </div>
+    <button class="dashboard-link" id="downloadPdfBtn" onclick="downloadCurrentReportPdf()" style="display:none;">Download report PDF</button>
+    <a class="dashboard-link" href="cyberriskdashboard.html">Open dashboard</a>
     <button class="reset-btn" onclick="resetAll()">&#8635;&nbsp; Start new assessment</button>
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="script.js"></script>
 <script src="googleAuth.js"></script>
 </body>

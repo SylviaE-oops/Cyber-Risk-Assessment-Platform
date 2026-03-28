@@ -4,7 +4,8 @@
   "private": true,
   "main": "back-end/server.js",
   "scripts": {
-    "start": "node back-end/server.js"
+    "start": "node back-end/server.js",
+    "migrate": "node back-end/migrate.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
@@ -14,6 +15,7 @@
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.3",
     "mysql": "^2.18.1",
-    "mysql2": "^3.20.0"
+    "mysql2": "^3.20.0",
+    "openai": "^6.33.0"
   }
 }

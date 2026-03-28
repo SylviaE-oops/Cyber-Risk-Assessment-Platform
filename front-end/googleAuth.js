@@ -3,6 +3,7 @@
   const AUTH_TOKEN_KEY = 'cyberposture_jwt_token';
   const AUTH_USER_KEY = 'cyberposture_auth_user';
   const GOOGLE_CLIENT_ID = window.GOOGLE_CLIENT_ID || '';
+  const DASHBOARD_URL = 'cyberriskdashboard.html';
 
   let isRegistrationMode = false;
 
@@ -64,8 +65,7 @@
   function signOut() {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
-    document.getElementById('userInfo').style.display = 'none';
-    document.getElementById('loginBtn').style.display = '';
+    window.location.href = 'index.html';
   }
 
   function clearLoginError() {
@@ -104,14 +104,18 @@
         body: JSON.stringify({ username, password })
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.token) {
-        throw new Error(data.error || 'Login failed');
+      if (!response.ok) {
+        let errMsg = 'Login failed';
+        try { const d = await response.json(); errMsg = d.error || errMsg; } catch { /* non-JSON body */ }
+        throw new Error(errMsg);
       }
+      const data = await response.json();
+      if (!data.token) throw new Error('Login failed');
 
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       setSignedInUser(username);
       closeLoginModal();
+      window.location.href = DASHBOARD_URL;
     } catch (error) {
       document.getElementById('loginError').textContent = error.message || 'Login failed';
     } finally {
@@ -152,14 +156,18 @@
           body: JSON.stringify({ username, password, confirmPassword, org_name, org_type })
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.token) {
-        throw new Error(data.error || 'Registration failed');
+      if (!response.ok) {
+        let errMsg = 'Registration failed';
+        try { const d = await response.json(); errMsg = d.error || errMsg; } catch { /* non-JSON body */ }
+        throw new Error(errMsg);
       }
+      const data = await response.json();
+      if (!data.token) throw new Error('Registration failed');
 
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       setSignedInUser(username);
       closeLoginModal();
+      window.location.href = DASHBOARD_URL;
     } catch (error) {
       document.getElementById('registerError').textContent = error.message || 'Registration failed';
     } finally {
@@ -176,14 +184,18 @@
         body: JSON.stringify({ id_token: response.credential })
       });
 
-      const data = await apiResponse.json();
-      if (!apiResponse.ok || !data.token) {
-        throw new Error(data.error || 'Google login failed');
+      if (!apiResponse.ok) {
+        let errMsg = 'Google login failed';
+        try { const d = await apiResponse.json(); errMsg = d.error || errMsg; } catch { /* non-JSON body */ }
+        throw new Error(errMsg);
       }
+      const data = await apiResponse.json();
+      if (!data.token) throw new Error('Google login failed');
 
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       setSignedInUser(data.user?.name || data.user?.username || 'Google User');
       closeLoginModal();
+      window.location.href = DASHBOARD_URL;
     } catch (error) {
       document.getElementById('loginError').textContent = error.message || 'Google login failed';
     }
