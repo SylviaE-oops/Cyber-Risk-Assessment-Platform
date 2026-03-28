@@ -45,6 +45,21 @@
     <!-- Register Form -->
     <div class="login-form" id="registerForm" style="display:none;">
       <div class="field-group">
+          <label for="registerOrgName">Organization Name</label>
+          <input type="text" id="registerOrgName" placeholder="Enter organization name">
+        </div>
+        <div class="field-group">
+          <label for="registerOrgType">Organization Type</label>
+          <select id="registerOrgType">
+            <option value="">Select organization type</option>
+            <option value="small business">Small business</option>
+            <option value="nonprofit">Nonprofit</option>
+            <option value="student organization">Student organization</option>
+            <option value="healthcare organization">Healthcare organization</option>
+            <option value="educational institution">Educational institution</option>
+          </select>
+        </div>
+      <div class="field-group">
         <label for="registerUsername">Email</label>
         <input type="email" id="registerUsername" placeholder="Enter email" autocomplete="username">
       </div>

@@ -60,10 +60,10 @@ app.post('/api/auth/token', async (req, res) => {
 
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { username, password, confirmPassword } = req.body;
+      const { username, password, confirmPassword, org_name, org_type } = req.body;
 
-    if (!username || !password || !confirmPassword) {
-      return res.status(400).json({ error: 'username, password, and confirmPassword are required' });
+      if (!username || !password || !confirmPassword || !org_name || !org_type) {
+        return res.status(400).json({ error: 'email, password, organization name, and organization type are required' });
     }
 
     if (password !== confirmPassword) {
@@ -89,8 +89,8 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Insert new user
     const [result] = await pool.execute(
-      'INSERT INTO users (email, password) VALUES (?, ?)',
-      [username, hashedPassword]
+        'INSERT INTO users (email, password, org_name, org_type) VALUES (?, ?, ?, ?)',
+        [username, hashedPassword, org_name, org_type]
     );
 
     const token = jwt.sign({ username, userId: result.insertId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -98,6 +98,7 @@ app.post('/api/auth/register', async (req, res) => {
       token, 
       token_type: 'Bearer', 
       expires_in: JWT_EXPIRES_IN,
+        user: { username, org_name, org_type },
       message: 'Account created successfully'
     });
   } catch (error) {

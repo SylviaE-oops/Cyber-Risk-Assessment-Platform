@@ -126,8 +126,11 @@
     const password = document.getElementById('registerPassword').value;
     const confirmPassword = document.getElementById('registerConfirm').value;
 
-    if (!username || !password || !confirmPassword) {
-      document.getElementById('registerError').textContent = 'Please fill in all fields.';
+      const org_name = document.getElementById('registerOrgName').value.trim();
+      const org_type = document.getElementById('registerOrgType').value;
+
+      if (!username || !password || !confirmPassword || !org_name || !org_type) {
+        document.getElementById('registerError').textContent = 'Please fill in all fields.';
       return;
     }
 
@@ -146,7 +149,7 @@
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, confirmPassword })
+          body: JSON.stringify({ username, password, confirmPassword, org_name, org_type })
       });
 
       const data = await response.json();
