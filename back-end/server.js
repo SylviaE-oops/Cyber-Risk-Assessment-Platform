@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const { OAuth2Client } = require('google-auth-library');
 
 dotenv.config();
@@ -12,10 +13,9 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_only_change_me';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
-const API_USERNAME = process.env.API_USERNAME || 'demo';
-const API_PASSWORD = process.env.API_PASSWORD || 'demo123';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+const BCRYPT_ROUNDS = 10;
 
 app.use(cors());
 app.use(express.json());
@@ -32,15 +32,77 @@ app.post('/api/auth/token', async (req, res) => {
       return res.status(400).json({ error: 'username and password are required' });
     }
 
-    if (username !== API_USERNAME || password !== API_PASSWORD) {
+    // Query the users table for this email/username
+    const [rows] = await pool.execute(
+      'SELECT id, email, password FROM users WHERE email = ?',
+      [username]
+    );
+
+    if (rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const user = rows[0];
+
+    // Compare provided password with stored hash
+    const passwordValid = await bcrypt.compare(password, user.password);
+    if (!passwordValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign({ username: user.email, userId: user.id }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     return res.json({ token, token_type: 'Bearer', expires_in: JWT_EXPIRES_IN });
   } catch (error) {
     console.error('POST /api/auth/token error:', error);
     return res.status(500).json({ error: 'Failed to create token' });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, password, confirmPassword } = req.body;
+
+    if (!username || !password || !confirmPassword) {
+      return res.status(400).json({ error: 'username, password, and confirmPassword are required' });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ error: 'Passwords do not match' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    // Check if user already exists
+    const [existingUsers] = await pool.execute(
+      'SELECT id FROM users WHERE email = ?',
+      [username]
+    );
+
+    if (existingUsers.length > 0) {
+      return res.status(409).json({ error: 'User already exists' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    // Insert new user
+    const [result] = await pool.execute(
+      'INSERT INTO users (email, password) VALUES (?, ?)',
+      [username, hashedPassword]
+    );
+
+    const token = jwt.sign({ username, userId: result.insertId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    return res.status(201).json({ 
+      token, 
+      token_type: 'Bearer', 
+      expires_in: JWT_EXPIRES_IN,
+      message: 'Account created successfully'
+    });
+  } catch (error) {
+    console.error('POST /api/auth/register error:', error);
+    return res.status(500).json({ error: 'Failed to create account' });
   }
 });
 
@@ -164,6 +226,10 @@ app.get('/api/assessment/:id', requireJwt, async (req, res) => {
     console.error('GET /api/assessment/:id error:', error);
     return res.status(500).json({ error: 'Failed to retrieve assessment' });
   }
+});
+
+app.get('/api/users', requireJwt, async (_req, res) => {
+
 });
 
 async function startServer() {

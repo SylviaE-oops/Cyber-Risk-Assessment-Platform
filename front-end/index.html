@@ -20,16 +20,18 @@
   <div class="modal-box">
     <button class="modal-close" onclick="closeLoginModal()">&#10005;</button>
     <div class="modal-logo">CyberPosture AI</div>
-    <h2 class="modal-title">Sign in to your account</h2>
-    <p class="modal-sub">Save your assessments and access your security history.</p>
-    <div class="google-btn-wrap">
+    <h2 class="modal-title" id="modalTitle">Sign in to your account</h2>
+    <p class="modal-sub" id="modalSub">Save your assessments and access your security history.</p>
+    <div class="google-btn-wrap" id="googleBtnSection">
       <div id="googleSignInBtn"></div>
     </div>
-    <div class="auth-divider"><span>or</span></div>
+    <div class="auth-divider" id="dividerSection"><span>or</span></div>
+    
+    <!-- Sign In Form -->
     <div class="login-form" id="loginForm">
       <div class="field-group">
-        <label for="loginUsername">Username</label>
-        <input type="text" id="loginUsername" placeholder="Enter username" autocomplete="username">
+        <label for="loginUsername">Email</label>
+        <input type="email" id="loginUsername" placeholder="Enter email" autocomplete="username">
       </div>
       <div class="field-group">
         <label for="loginPassword">Password</label>
@@ -37,7 +39,28 @@
       </div>
       <button class="btn-next login-submit" id="loginSubmitBtn" onclick="handleLogin()">Sign in</button>
       <p class="login-error" id="loginError"></p>
+      <p class="modal-toggle">Don't have an account? <a href="#" onclick="toggleRegistration(event)">Create one</a></p>
     </div>
+    
+    <!-- Register Form -->
+    <div class="login-form" id="registerForm" style="display:none;">
+      <div class="field-group">
+        <label for="registerUsername">Email</label>
+        <input type="email" id="registerUsername" placeholder="Enter email" autocomplete="username">
+      </div>
+      <div class="field-group">
+        <label for="registerPassword">Password</label>
+        <input type="password" id="registerPassword" placeholder="At least 6 characters" autocomplete="new-password">
+      </div>
+      <div class="field-group">
+        <label for="registerConfirm">Confirm Password</label>
+        <input type="password" id="registerConfirm" placeholder="Confirm password" autocomplete="new-password">
+      </div>
+      <button class="btn-next login-submit" id="registerSubmitBtn" onclick="handleRegister()">Create account</button>
+      <p class="login-error" id="registerError"></p>
+      <p class="modal-toggle">Already have an account? <a href="#" onclick="toggleRegistration(event)">Sign in</a></p>
+    </div>
+    
     <p class="modal-terms">By signing in, you agree to our Terms of Service and Privacy Policy.</p>
   </div>
 </div>
